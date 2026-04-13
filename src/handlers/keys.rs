@@ -5,6 +5,7 @@ use crate::models::export::ExportFormat;
 use crate::ui::backup_restore;
 use crate::ui::colors::RosePine;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::fmt::Debug;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -1450,18 +1451,29 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
 
     // Try to launch editors in order of preference
     let env_editor;
-    let editors = if let Ok(editor) = std::env::var("EDITOR") {
+    let mut args: Vec<&str> = vec![];
+    let editors: Vec<&str> = if let Ok(editor) = std::env::var("EDITOR") {
         env_editor = editor;
-        vec![env_editor.as_str()]
+        let mut parts = env_editor.split_whitespace();
+        let bin = match parts.next() {
+            Some(b) => b,
+            None => return Err(format!("$EDITOR is set but empty: {:?}", env_editor).into()),
+        };
+        args = parts.collect();
+        vec![bin]
     } else {
         vec!["nvim", "vim", "nano"]
     };
 
     let mut editor_launched = false;
-
     for editor in &editors {
-        if let Ok(mut child) = Command::new(editor).arg(file_path).spawn() {
-            if let Ok(_) = child.wait() {
+        let mut cmd = Command::new(editor);
+        for arg in &args {
+            cmd.arg(arg);
+        }
+        cmd.arg(file_path);
+        if let Ok(mut child) = cmd.spawn() {
+            if child.wait().is_ok() {
                 editor_launched = true;
                 break;
             }
@@ -1469,7 +1481,12 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
     }
 
     if !editor_launched {
-        println!("Could not launch any editor (nvim, vim, nano)");
+        let tried = if args.is_empty() && editors != vec!["nvim", "vim", "nano"] {
+            editors.join(", ")
+        } else {
+            "nvim, vim, nano".to_string()
+        };
+        println!("Could not launch any editor ({tried})");
         println!("Press Enter to continue...");
         let mut buffer = String::new();
         std::io::stdin().read_line(&mut buffer)?;
