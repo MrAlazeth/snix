@@ -5,7 +5,6 @@ use crate::models::export::ExportFormat;
 use crate::ui::backup_restore;
 use crate::ui::colors::RosePine;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::fmt::Debug;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
