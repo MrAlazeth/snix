@@ -1482,24 +1482,25 @@ impl SuspendedTerminal {
         Ok(Self { _private: () })
     }
 
-    fn exit(self) {
-        // consumes self, called by with_suspended_terminal
+    // consumes self, called by with_suspended_terminal
+    fn exit(self) -> Result<(), Box<dyn std::error::Error>> {
         use ratatui::crossterm::{
             execute,
             terminal::{EnterAlternateScreen, enable_raw_mode},
         };
         use std::io::{Write, stdout};
 
-        let _ = enable_raw_mode();
-        let _ = execute!(stdout(), EnterAlternateScreen);
+        enable_raw_mode()?;
+        execute!(stdout(), EnterAlternateScreen)?;
         print!("\x1Bc\x1B[!p\x1B[3J\x1B[2J\x1B[H\x1B[?1049h\x1B[?25l");
-        let _ = stdout().flush();
+        stdout().flush()?;
+        Ok(())
     }
 }
 
 impl Drop for SuspendedTerminal {
     fn drop(&mut self) {
-        // Fallback for panics/early returns that bypass exit()
+        // Last-resort fallback for panics. Errors are silent here by necessity.
         use ratatui::crossterm::{
             execute,
             terminal::{EnterAlternateScreen, enable_raw_mode},
@@ -1544,8 +1545,14 @@ where
 {
     let term = SuspendedTerminal::enter()?;
     let result = f(&term);
-    term.exit(); // explicit clean exit; Drop is just the safety net
-    result
+    let restore = term.exit();
+
+    match (result, restore) {
+        (Ok(r), Ok(())) => Ok(r),
+        (Err(e), Ok(())) => Err(e),
+        (Ok(_), Err(re)) => Err(re),
+        (Err(e), Err(re)) => Err(format!("editor error: {e}; restore error: {re}").into()),
+    }
 }
 
 fn build_editor_candidates() -> Vec<(String, Vec<String>)> {
