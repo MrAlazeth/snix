@@ -1449,7 +1449,14 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
     stdout().flush()?;
 
     // Try to launch editors in order of preference
-    let editors = ["nvim", "vim", "nano"];
+    let env_editor;
+    let editors = if let Ok(editor) = std::env::var("EDITOR") {
+        env_editor = editor;
+        vec![env_editor.as_str()]
+    } else {
+        vec!["nvim", "vim", "nano"]
+    };
+
     let mut editor_launched = false;
 
     for editor in &editors {
