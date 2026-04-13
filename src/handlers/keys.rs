@@ -1448,13 +1448,45 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
     print!("\x1B[?25h"); // Show cursor
     stdout().flush()?;
 
-    // Try to launch editors in order of preference
-    let editors = ["nvim", "vim", "nano"];
-    let mut editor_launched = false;
+    // Parse $EDITOR with shell-words
+    let (env_bin, env_args): (Option<String>, Vec<String>) = match std::env::var("EDITOR") {
+        Err(_) => (None, vec![]),
+        Ok(ref val) if val.trim().is_empty() => {
+            eprintln!("Warning: $EDITOR is set but empty, falling back to defaults");
+            (None, vec![])
+        }
+        Ok(ref val) => match shell_words::split(val) {
+            Ok(parts) if !parts.is_empty() => (Some(parts[0].clone()), parts[1..].to_vec()),
+            _ => {
+                eprintln!(
+                    "Warning: could not parse $EDITOR {:?}, falling back to defaults",
+                    val
+                );
+                (None, vec![])
+            }
+        },
+    };
 
-    for editor in &editors {
-        if let Ok(mut child) = Command::new(editor).arg(file_path).spawn() {
-            if let Ok(_) = child.wait() {
+    // Build the candidate list. $EDITOR goes first (when set)
+    let defaults = ["nvim", "vim", "nano"];
+    let mut editor_launched = false;
+    let candidates: Vec<(&str, &[String])> = {
+        let mut v = vec![];
+        if let Some(ref bin) = env_bin {
+            v.push((bin.as_str(), env_args.as_slice()));
+        }
+        for d in &defaults {
+            v.push((d, &[]));
+        }
+        v
+    };
+
+    for (editor, extra_args) in &candidates {
+        let mut cmd = Command::new(editor);
+        cmd.args(*extra_args);
+        cmd.arg(file_path);
+        if let Ok(mut child) = cmd.spawn() {
+            if child.wait().is_ok() {
                 editor_launched = true;
                 break;
             }
@@ -1462,7 +1494,8 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
     }
 
     if !editor_launched {
-        println!("Could not launch any editor (nvim, vim, nano)");
+        let tried: Vec<&str> = candidates.iter().map(|(bin, _)| *bin).collect();
+        println!("Could not launch any editor ({})", tried.join(", "));
         println!("Press Enter to continue...");
         let mut buffer = String::new();
         std::io::stdin().read_line(&mut buffer)?;
