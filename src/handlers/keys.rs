@@ -1452,14 +1452,19 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
     let (env_bin, env_args): (Option<String>, Vec<String>) = match std::env::var("EDITOR") {
         Err(_) => (None, vec![]),
         Ok(ref val) if val.trim().is_empty() => {
-            return Err(format!("$EDITOR is set but empty: {:?}", val).into());
+            eprintln!("Warning: $EDITOR is set but empty, falling back to defaults");
+            (None, vec![])
         }
-        Ok(ref val) => {
-            let mut parts = shell_words::split(val)
-                .map_err(|e| format!("Failed to parse $EDITOR {:?}: {}", val, e))?;
-            let bin = parts.remove(0);
-            (Some(bin), parts)
-        }
+        Ok(ref val) => match shell_words::split(val) {
+            Ok(parts) if !parts.is_empty() => (Some(parts[0].clone()), parts[1..].to_vec()),
+            _ => {
+                eprintln!(
+                    "Warning: could not parse $EDITOR {:?}, falling back to defaults",
+                    val
+                );
+                (None, vec![])
+            }
+        },
     };
 
     // Build the candidate list. $EDITOR goes first (when set)
