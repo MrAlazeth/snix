@@ -1448,28 +1448,37 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
     print!("\x1B[?25h"); // Show cursor
     stdout().flush()?;
 
-    // Try to launch editors in order of preference
-    let env_editor;
-    let mut args: Vec<&str> = vec![];
-    let editors: Vec<&str> = if let Ok(editor) = std::env::var("EDITOR") {
-        env_editor = editor;
-        let mut parts = env_editor.split_whitespace();
-        let bin = match parts.next() {
-            Some(b) => b,
-            None => return Err(format!("$EDITOR is set but empty: {:?}", env_editor).into()),
-        };
-        args = parts.collect();
-        vec![bin]
-    } else {
-        vec!["nvim", "vim", "nano"]
+    // Parse $EDITOR with shell-words
+    let (env_bin, env_args): (Option<String>, Vec<String>) = match std::env::var("EDITOR") {
+        Err(_) => (None, vec![]),
+        Ok(ref val) if val.trim().is_empty() => {
+            return Err(format!("$EDITOR is set but empty: {:?}", val).into());
+        }
+        Ok(ref val) => {
+            let mut parts = shell_words::split(val)
+                .map_err(|e| format!("Failed to parse $EDITOR {:?}: {}", val, e))?;
+            let bin = parts.remove(0);
+            (Some(bin), parts)
+        }
     };
 
+    // Build the candidate list. $EDITOR goes first (when set)
+    let defaults = ["nvim", "vim", "nano"];
     let mut editor_launched = false;
-    for editor in &editors {
-        let mut cmd = Command::new(editor);
-        for arg in &args {
-            cmd.arg(arg);
+    let candidates: Vec<(&str, &[String])> = {
+        let mut v = vec![];
+        if let Some(ref bin) = env_bin {
+            v.push((bin.as_str(), env_args.as_slice()));
         }
+        for d in &defaults {
+            v.push((d, &[]));
+        }
+        v
+    };
+
+    for (editor, extra_args) in &candidates {
+        let mut cmd = Command::new(editor);
+        cmd.args(*extra_args);
         cmd.arg(file_path);
         if let Ok(mut child) = cmd.spawn() {
             if child.wait().is_ok() {
@@ -1480,12 +1489,8 @@ fn suspend_tui_for_editor(file_path: &std::path::Path) -> Result<(), Box<dyn std
     }
 
     if !editor_launched {
-        let tried = if args.is_empty() && editors != vec!["nvim", "vim", "nano"] {
-            editors.join(", ")
-        } else {
-            "nvim, vim, nano".to_string()
-        };
-        println!("Could not launch any editor ({tried})");
+        let tried: Vec<&str> = candidates.iter().map(|(bin, _)| *bin).collect();
+        println!("Could not launch any editor ({})", tried.join(", "));
         println!("Press Enter to continue...");
         let mut buffer = String::new();
         std::io::stdin().read_line(&mut buffer)?;
